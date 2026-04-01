@@ -1,5 +1,6 @@
 clear all
 close all
+for ord=1:2
 %% Step 2: Create the PDE Model
 model = createpde(2);
 
@@ -29,7 +30,12 @@ figure;
 pdegplot(model,EdgeLabels="on")
 %% Step 3: Generate Mesh
 maxmesh=0.125;
-generateMesh(model, 'Hmax', maxmesh, GeometricOrder="linear");
+if ord==1
+mesh = generateMesh(model, 'Hmax', maxmesh, GeometricOrder="linear"); 
+elseif ord==2
+mesh = generateMesh(model,'Hmax', maxmesh, GeometricOrder="quadratic");
+end
+
 figure;
 pdemesh(model);
 title('Finite Element Mesh');
@@ -79,7 +85,8 @@ if nCols == 2
 elseif mod(nCols,2)==0
     nTimes = nCols/2;
     sol1 = zeros(nNodes, 2*nTimes);
-    mag = zeros(nNodes, nTimes);
+    mag1 = zeros(nNodes, nTimes);
+    mag2 = zeros(nNodes, nTimes);
     for k=1:nTimes
         comp1 = u_numerical(:,2*(k-1)+1);
         comp2 = u_numerical(:,2*(k-1)+2);
@@ -109,13 +116,48 @@ else
     end
 end
 
+dt = tlist(2) - tlist(1);
+nTimes = size(mag1,2);
+maxResidual = zeros(1,nTimes);
+
+for k = 2:nTimes
+    Uk = mag1(:,k);
+    Ik = mag2(:,k);
+    U  = [Uk; Ik];
+
+    Uk_prev = mag1(:,k-1);
+    Ik_prev = mag2(:,k-1);
+    Uprev   = [Uk_prev; Ik_prev];
+
+    % Build state for nonlinear PDE
+    state.u = U;
+
+    % Assemble matrices at this state
+    F = assembleFEMatrices(model, state);
+
+    % Time derivative
+    Ut = (U - Uprev) / dt;
+
+    % Weak-form residual
+    R = F.M * Ut + F.A * U + F.K * U - F.F;
+
+    maxResidual(k) = max(abs(R));
+end
+
+plot(tlist, maxResidual,'o-','LineWidth',1.5)
+xlabel('Time')
+ylabel('Max residual')
+title(sprintf('Residual trend (ord = %d)', ord))
+grid on
+
+
 idxs = [1,2,3,4];
 figure;
 nplot = numel(idxs);
 for i=1:nplot
     subplot(2,2,i)
     pdeplot(model, 'XYData', mag1(:,idxs(i)), 'ZData', mag1(:,idxs(i)), 'Mesh','on');
-    title(sprintf('u at t=%f', (idxs(i)-1)*0.2));
+    title(sprintf('u at t=%f - ord=%d', (idxs(i)-1)*0.2, ord));
     colormap jet; colorbar;
 end
 figure;
@@ -123,6 +165,7 @@ nplot = numel(idxs);
 for i=1:nplot
     subplot(2,2,i)
     pdeplot(model, 'XYData', mag2(:,idxs(i)), 'ZData', mag2(:,idxs(i)), 'Mesh','on');
-    title(sprintf('I at t=%f', (idxs(i)-1)*0.2));
+    title(sprintf('I at t=%f - ord=%d', (idxs(i)-1)*0.2, ord));
     colormap jet; colorbar;
+end
 end

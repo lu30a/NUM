@@ -1,6 +1,6 @@
 from numpy import linalg as la
 import numpy as np
-from scipy.sparse.linalg import LinearOperator, bicgstab, minres, gmres
+from scipy.sparse.linalg import LinearOperator, gmres, spsolve
 
 
 def jacobi(a, b):
@@ -71,37 +71,67 @@ def sor(A,b,omega):
         continua=(err > tol) & (iter < maxit)
     return x, iter, err
 
+def newton_solver(x0, F, J, rel_tol=1e-8, abs_tol_F=1e-10, maxiter=50, lin_rtol=1e-8, verbose=False):
 
+    x = np.array(x0, dtype=float)
 
-def newton_solver(x0, F, J, rel_tol, maxiter, lin_rtol=1e-8, lin_atol=1e-10, verbose=False):
-    x = np.array(x0)
-    n=len(x)
     for niter in range(maxiter):
         Fx = F(x)
-        Jx = J(x)
+        Fnorm = np.linalg.norm(Fx)
 
-        dx, info = bicgstab(Jx, Fx, rtol=lin_rtol, atol=lin_atol)
+        if Fnorm < abs_tol_F:
+            if verbose:
+                print(f"Newton converged: ||F|| = {Fnorm:.3e} at iter {niter}")
+            return x, niter
+
+
+        Jx = J(x)
+      
+        dx, info = gmres(Jx, -Fx, rtol=lin_rtol)
+        
+        
         if info != 0:
             if verbose:
-                print(f"newton solver -> info = {info}")
+                print(f"newton solver -> gmres info = {info}")
             break
 
-        alpha, _ = damping(x, -dx, F, gamma=0.5, maxit=10) 
-        x_new = x - alpha * dx 
+        alpha, niter2 = damping(x, dx, F, gamma=0.9, maxit=10)
+        niter += niter2 + 1
 
-        if np.linalg.norm(x_new) > 0:
-            rel_error = np.linalg.norm(dx) / np.linalg.norm(x_new)
-        else:
-            rel_error = np.linalg.norm(dx)
-        if rel_error < rel_tol:
+        x_new = x + alpha * dx
+        
+        step_norm = np.linalg.norm(dx)
+        xnorm = max(1.0, np.linalg.norm(x_new))
+        rel_step = step_norm / xnorm
+
+        if rel_step < rel_tol:
+            if verbose:
+                print(f"Newton converged: rel_step = {rel_step:.3e} at iter {niter+1}")
             return x_new, niter + 1
+
         x = x_new
+
     return x, maxiter
 
+from scipy.sparse import lil_matrix
 
-def quasi_newton_solver(x0, F, rel_tol=1e-8, maxiter=50,
-                        lin_rtol=1e-6, verbose=False):
-    h = 1e-6
+def assemble_fd_jacobian(F, x, h=1e-6):
+    x = np.array(x, dtype=float)
+    n = x.size
+    Fx = F(x)
+    
+    J = lil_matrix((n, n))
+    
+    for j in range(n):
+        xj = x.copy()
+        xj[j] += h
+        Fj = F(xj)
+        J[:, j] = (Fj - Fx) / h
+    
+    return J.tocsr() 
+
+
+def quasi_newton_solver(x0, F, rel_tol=1e-8, maxiter=50, lin_rtol=1e-6, verbose=False):
     x = np.array(x0, dtype=float).reshape(-1)
     n = x.size
     niter = 0
@@ -113,20 +143,16 @@ def quasi_newton_solver(x0, F, rel_tol=1e-8, maxiter=50,
         if Fnorm == 0:
             return x, niter
 
-        def matvec(v):
-            v = np.array(v, dtype=float).reshape(-1)
-            return (np.array(F(x + h*v), dtype=float).reshape(-1) - Fx) / h
+        Jx = assemble_fd_jacobian(F, x, h=1e-6)
 
-        Jop = LinearOperator((n, n), matvec=matvec, dtype=float)
-
-        dx, info = gmres(Jop, -Fx, rtol=lin_rtol)
+        dx, info = gmres(Jx, -Fx, rtol=lin_rtol)
 
         if info != 0:
             if verbose:
                 print(f"quasi-newton solver -> info = {info}")
             break
 
-        alpha, niter2 = damping(x, dx, F, gamma=0.5, maxit=50)
+        alpha, niter2 = damping(x, dx, F, gamma=0.6, maxit=20)
         niter += niter2 + 1
 
         x_new = x + alpha * dx

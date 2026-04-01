@@ -237,8 +237,8 @@ def div_I_grad_u(u_f, I_f, M, N, hx, hy, active_mask):
     # divergence on cell centers (1..Nu-2, 1..Mv-2)
     div = np.zeros_like(u)
     div[1:Nu-1, 1:Mv-1] = (
-        (Fx_p[1:Nu-1, 1:Mv-1] - Fx_p[0:Nu-2, 1:Mv-1]) / hx +
-        (Fy_p[1:Nu-1, 1:Mv-1] - Fy_p[1:Nu-1, 0:Mv-2]) / hy
+        (Fx_p[1:Nu-1, 1:Mv-1] - Fx_m[0:Nu-2, 1:Mv-1]) / hx +
+        (Fy_p[1:Nu-1, 1:Mv-1] - Fy_m[1:Nu-1, 0:Mv-2]) / hy
     )
 
     return div.reshape(-1)[active_mask]
@@ -369,26 +369,27 @@ def solveHyp(tspan, x_span, u0, h, a, burgers, f, scheme, nu=0.9):
     elif scheme == 'Lax-Friedrichs':  
         coeff = h**2 / (2*k)
     elif scheme == 'Lax-Wendroff':
-        coeff = a**2 * k / 2
+        coeff = a* k / h
 
     # Time stepping
     U = np.zeros((N, M))
     U[:, 0] = U0
 
     for j in range(1, M):
-        if scheme == 1 and a<0:  # Upwind with positive a
+        if scheme == 'Upwind' and a<0:  # Upwind with positive a
             U[:, j] = U[:, j-1] - (abs(a)*k * B.dot(U[:, j-1]) + (coeff*k) * C.dot(U[:, j-1]))
-        elif scheme == 1 and a>0:  # Upwind with negative a
+        elif scheme == 'Upwind' and a>0:  # Upwind with negative a
             if burgers:
                 U[:, j] = U[:, j-1] - (a*k * B.dot(f(U[:, j-1])) - (coeff*k) * C.dot(U[:, j-1]))
             else:
                 U[:, j] = U[:, j-1] - (a*k * B.dot(U[:, j-1]) - (coeff*k) * C.dot(U[:, j-1]))
-        else:
+        elif scheme == 'Lax-Friedrichs':
             if burgers:
                 U[:, j] = U[:, j-1] - (a*k * B.dot(f(U[:, j-1])) - (coeff*k) * C.dot(U[:, j-1]))
             else:
                 U[:, j] = U[:, j-1] - (a*k * B.dot(U[:, j-1]) - (coeff*k) * C.dot(U[:, j-1]))
-
+        elif scheme == 'Lax-Wendroff':
+            U[:, j] = U[:, j-1] - h*coeff*B.dot(U[:, j-1]) + 0.5*h**2*coeff**2*C.dot(U[:, j-1])
     return U
 
 
@@ -434,8 +435,8 @@ def MoL_CN_nwt(f, tspan, y0, N_steps, J=None, tau=1e-8, maxit=None):
                 else:
                     Jmat = Jf[-1] * np.eye(n)
                 return np.eye(n) - (h / 2.0) * Jmat
-        
-            u_k, niter = newton_solver(u_prev, F, jac_F, tau, maxit)
+            
+            u_k, niter = newton_solver(u_prev, F, jac_F, rel_tol=tau, abs_tol_F=tau, maxiter=50, lin_rtol=tau, verbose=False)
             feval += niter
         else:
             u_k, niter = quasi_newton_solver(u_prev, F, tau, maxit)
